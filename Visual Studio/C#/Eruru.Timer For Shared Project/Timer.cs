@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Threading;
 using System.Timers;
 using RawTimer = System.Timers.Timer;
 
@@ -13,19 +12,18 @@ namespace Eruru.Timer {
 		public DateTime Next {
 
 			get {
-				ReaderWriterLock.AcquireReaderLock (Timeout.Infinite);
-				try {
-					return DateTimes.Count == 0 ? DateTime.MinValue : DateTimes[0];
-				} finally {
-					ReaderWriterLock.ReleaseReaderLock ();
-				}
+				DateTime dateTime = DateTime.MinValue;
+				ReaderWriterLockHelper.Read (() => {
+					dateTime = DateTimes.Count == 0 ? DateTime.MinValue : DateTimes[0];
+				});
+				return dateTime;
 			}
 
 		}
 
 		readonly RawTimer RawTimer = new RawTimer ();
 		readonly List<DateTime> DateTimes = new List<DateTime> ();
-		readonly ReaderWriterLock ReaderWriterLock = new ReaderWriterLock ();
+		readonly ReaderWriterLockHelper.ReaderWriterLockHelper ReaderWriterLockHelper = new ReaderWriterLockHelper.ReaderWriterLockHelper ();
 
 		public Timer () {
 			RawTimer.Elapsed += RawTimer_Elapsed;
@@ -35,8 +33,7 @@ namespace Eruru.Timer {
 			if (dateTime <= DateTime.Now) {
 				return;
 			}
-			ReaderWriterLock.AcquireWriterLock (Timeout.Infinite);
-			try {
+			ReaderWriterLockHelper.Write (() => {
 				int i = 0;
 				for (; i < DateTimes.Count; i++) {
 					if (IgnoreSame && dateTime == DateTimes[i]) {
@@ -49,53 +46,41 @@ namespace Eruru.Timer {
 				}
 				DateTimes.Insert (i, dateTime);
 				Update ();
-			} finally {
-				ReaderWriterLock.ReleaseWriterLock ();
-			}
+			});
 		}
 
 		public void ForEach (Action<DateTime> action) {
 			if (action is null) {
 				throw new ArgumentNullException (nameof (action));
 			}
-			ReaderWriterLock.AcquireReaderLock (Timeout.Infinite);
-			try {
+			ReaderWriterLockHelper.Read (() => {
 				DateTimes.ForEach (action);
-			} finally {
-				ReaderWriterLock.ReleaseReaderLock ();
-			}
+			});
 		}
 
 		public int RemoveAll (Predicate<DateTime> match) {
 			if (match is null) {
 				throw new ArgumentNullException (nameof (match));
 			}
-			ReaderWriterLock.AcquireWriterLock (Timeout.Infinite);
-			try {
-				return DateTimes.RemoveAll (match);
-			} finally {
-				ReaderWriterLock.ReleaseWriterLock ();
-			}
+			int count = 0;
+			ReaderWriterLockHelper.Write (() => {
+				count = DateTimes.RemoveAll (match);
+			});
+			return count;
 		}
 
 		public void Clear () {
-			ReaderWriterLock.AcquireWriterLock (Timeout.Infinite);
-			try {
+			ReaderWriterLockHelper.Write (() => {
 				RawTimer.Enabled = false;
 				DateTimes.Clear ();
-			} finally {
-				ReaderWriterLock.ReleaseWriterLock ();
-			}
+			});
 		}
 
 		private void RawTimer_Elapsed (object sender, ElapsedEventArgs e) {
 			if (DateTimes.Count != 0) {
-				ReaderWriterLock.AcquireWriterLock (Timeout.Infinite);
-				try {
+				ReaderWriterLockHelper.Write (() => {
 					DateTimes.RemoveAt (0);
-				} finally {
-					ReaderWriterLock.ReleaseWriterLock ();
-				}
+				});
 			}
 			Update ();
 			Elapsed?.Invoke (sender, e);
