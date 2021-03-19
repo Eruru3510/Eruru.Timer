@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Timers;
+using Eruru.ReaderWriterLockHelper;
 using RawTimer = System.Timers.Timer;
 
 namespace Eruru.Timer {
@@ -13,8 +14,8 @@ namespace Eruru.Timer {
 
 			get {
 				DateTime dateTime = DateTime.MinValue;
-				ReaderWriterLockHelper.Read (() => {
-					dateTime = DateTimes.Count == 0 ? DateTime.MinValue : DateTimes[0];
+				ReaderWriterLockHelper.Read ((ref List<DateTime> dateTimes) => {
+					dateTime = dateTimes.Count == 0 ? DateTime.MinValue : dateTimes[0];
 				});
 				return dateTime;
 			}
@@ -22,8 +23,7 @@ namespace Eruru.Timer {
 		}
 
 		readonly RawTimer RawTimer = new RawTimer ();
-		readonly List<DateTime> DateTimes = new List<DateTime> ();
-		readonly ReaderWriterLockHelper.ReaderWriterLockHelper ReaderWriterLockHelper = new ReaderWriterLockHelper.ReaderWriterLockHelper ();
+		readonly ReaderWriterLockHelper<List<DateTime>> ReaderWriterLockHelper = new ReaderWriterLockHelper<List<DateTime>> (new List<DateTime> ());
 
 		public Timer () {
 			RawTimer.Elapsed += RawTimer_Elapsed;
@@ -33,18 +33,18 @@ namespace Eruru.Timer {
 			if (dateTime <= DateTime.Now) {
 				return;
 			}
-			ReaderWriterLockHelper.Write (() => {
+			ReaderWriterLockHelper.Write ((ref List<DateTime> dateTimes) => {
 				int i = 0;
-				for (; i < DateTimes.Count; i++) {
-					if (IgnoreSame && dateTime == DateTimes[i]) {
+				for (; i < dateTimes.Count; i++) {
+					if (IgnoreSame && dateTime == dateTimes[i]) {
 						Update ();
 						return;
 					}
-					if (dateTime < DateTimes[i]) {
+					if (dateTime < dateTimes[i]) {
 						break;
 					}
 				}
-				DateTimes.Insert (i, dateTime);
+				dateTimes.Insert (i, dateTime);
 				Update ();
 			});
 		}
@@ -53,8 +53,8 @@ namespace Eruru.Timer {
 			if (action is null) {
 				throw new ArgumentNullException (nameof (action));
 			}
-			ReaderWriterLockHelper.Read (() => {
-				DateTimes.ForEach (action);
+			ReaderWriterLockHelper.Read ((ref List<DateTime> dateTimes) => {
+				dateTimes.ForEach (action);
 			});
 		}
 
@@ -63,36 +63,40 @@ namespace Eruru.Timer {
 				throw new ArgumentNullException (nameof (match));
 			}
 			int count = 0;
-			ReaderWriterLockHelper.Write (() => {
-				count = DateTimes.RemoveAll (match);
+			ReaderWriterLockHelper.Write ((ref List<DateTime> dateTimes) => {
+				count = dateTimes.RemoveAll (match);
 			});
 			return count;
 		}
 
 		public void Clear () {
-			ReaderWriterLockHelper.Write (() => {
+			ReaderWriterLockHelper.Write ((ref List<DateTime> dateTimes) => {
 				RawTimer.Enabled = false;
-				DateTimes.Clear ();
+				dateTimes.Clear ();
 			});
 		}
 
 		private void RawTimer_Elapsed (object sender, ElapsedEventArgs e) {
-			if (DateTimes.Count != 0) {
-				ReaderWriterLockHelper.Write (() => {
-					DateTimes.RemoveAt (0);
-				});
-			}
+			ReaderWriterLockHelper.Read ((ref List<DateTime> dateTimes) => {
+				if (dateTimes.Count != 0) {
+					ReaderWriterLockHelper.Write ((ref List<DateTime> subDateTimes) => {
+						subDateTimes.RemoveAt (0);
+					});
+				}
+			});
 			Update ();
 			Elapsed?.Invoke (sender, e);
 		}
 
 		void Update () {
-			if (DateTimes.Count == 0) {
-				RawTimer.Enabled = false;
-			} else {
+			ReaderWriterLockHelper.Read ((ref List<DateTime> dateTimes) => {
+				if (dateTimes.Count == 0) {
+					RawTimer.Enabled = false;
+					return;
+				}
 				RawTimer.Enabled = true;
-				RawTimer.Interval = Math.Max (1, (DateTimes[0] - DateTime.Now).TotalMilliseconds);
-			}
+				RawTimer.Interval = Math.Max (1, (dateTimes[0] - DateTime.Now).TotalMilliseconds);
+			});
 		}
 
 	}
